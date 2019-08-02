@@ -32,21 +32,28 @@ helper_yn0 = 0
 helper_yn1 = 0
 helper_yn2 = 0
 
-helper_y0 = 23
-helper_yr = 43
+helper_tag = 0
 
-def filter_helper(xn0):
-    global helper_xn1, helper_xn2, helper_yn0, helper_yn1, helper_yn2
+helper_y0 = 0
+helper_yr = 2048
+
+def filter_helper(tag):
+    global helper_xn1, helper_xn2, helper_yn0, helper_yn1, helper_yn2, helper_tag
+
+    helper_xn0 = tag - helper_tag - 2**15;
 
     helper_yn2 = helper_yn1
     helper_yn1 = helper_yn0
     helper_yn0 = (
-        ((133450380908*((35184372088832*xn0 >> 44) + (17592186044417*helper_xn1 >> 44))) >> 44)
+        ((133450380908*((35184372088832*helper_xn0 >> 44) + (17592186044417*helper_xn1 >> 44))) >> 44)
         + (29455872930889*helper_yn1 >> 44)
         - (12673794781453*helper_yn2 >> 44))
 
     helper_xn2 = helper_xn1
-    helper_xn1 = xn0
+    helper_xn1 = helper_xn0
+    
+    helper_tag = tag  
+
 
     helper_yn0 = min(helper_yn0, helper_y0 + helper_yr)
     helper_yn0 = max(helper_yn0, helper_y0 - helper_yr)
