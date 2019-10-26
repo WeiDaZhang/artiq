@@ -148,9 +148,10 @@ class Log(dict):
                         "priority": v["priority"],
                         "due_date": v["due_date"] or -1.,
                         "arguments": v["expid"].get("arguments", {}),
+                        "repo_rev": v["expid"]["repo_rev"],
                         "flush": v["flush"],
                     },
-                    keys={
+                    tags={
                         "status": "add",
                         "class_name": v["expid"]["class_name"],
                         "file": v["expid"]["file"],
@@ -194,6 +195,8 @@ class MasterReader(TaskObject):
                     ConnectionRefusedError, ConnectionResetError) as e:
                 logger.warning("Connection to master failed (%s: %s)",
                                e.__class__.__name__, str(e))
+            except Exception as e:
+                logger.exception(e)
             else:
                 logger.warning("Connection to master lost")
             logger.warning("Retrying in %.1f seconds", self.retry)

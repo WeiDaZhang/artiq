@@ -8,15 +8,17 @@ extern crate board_misoc;
 extern crate board_artiq;
 
 use core::convert::TryFrom;
-use board_misoc::{csr, irq, ident, clock, uart_logger};
-use board_artiq::{i2c, spi, si5324, drtioaux};
-#[cfg(has_serwb_phy_amc)]
-use board_artiq::serwb;
+use board_misoc::{csr, irq, ident, clock, uart_logger, i2c};
+use board_artiq::{spi, si5324, drtioaux};
 use board_artiq::drtio_routing;
 #[cfg(has_hmc830_7043)]
 use board_artiq::hmc830_7043;
 
 mod repeater;
+#[cfg(has_jdcg)]
+mod jdcg;
+#[cfg(any(has_ad9154, has_jdcg))]
+pub mod jdac_requests;
 
 fn drtiosat_reset(reset: bool) {
     unsafe {
@@ -290,6 +292,41 @@ fn process_aux_packet(_repeaters: &mut [repeater::Repeater],
             }
         }
 
+        drtioaux::Packet::JdacBasicRequest { destination: _destination, dacno: _dacno,
+                                             reqno: _reqno, param: _param } => {
+            forward!(_routing_table, _destination, *_rank, _repeaters, &packet);
+            #[cfg(has_ad9154)]
+            let (succeeded, retval) = {
+                #[cfg(rtio_frequency = "125.0")]
+                const LINERATE: u64 = 5_000_000_000;
+                #[cfg(rtio_frequency = "150.0")]
+                const LINERATE: u64 = 6_000_000_000;
+                match _reqno {
+                    jdac_requests::INIT => (board_artiq::ad9154::setup(_dacno, LINERATE).is_ok(), 0),
+                    jdac_requests::PRINT_STATUS => { board_artiq::ad9154::status(_dacno); (true, 0) },
+                    jdac_requests::PRBS => (board_artiq::ad9154::prbs(_dacno).is_ok(), 0),
+                    jdac_requests::STPL => (board_artiq::ad9154::stpl(_dacno, 4, 2).is_ok(), 0),
+                    jdac_requests::SYSREF_DELAY_DAC => { board_artiq::hmc830_7043::hmc7043::sysref_delay_dac(_dacno, _param); (true, 0) },
+                    jdac_requests::SYSREF_SLIP => { board_artiq::hmc830_7043::hmc7043::sysref_slip(); (true, 0) },
+                    jdac_requests::SYNC => {
+                        match board_artiq::ad9154::sync(_dacno) {
+                            Ok(false) => (true, 0),
+                            Ok(true) => (true, 1),
+                            Err(e) => {
+                                error!("DAC sync failed: {}", e);
+                                (false, 0)
+                            }
+                        }
+                    }
+                    _ => (false, 0)
+                }
+            };
+            #[cfg(not(has_ad9154))]
+            let (succeeded, retval) = (false, 0);
+            drtioaux::send(0,
+                &drtioaux::Packet::JdacBasicReply { succeeded: succeeded, retval: retval })
+        }
+
         _ => {
             warn!("received unexpected aux packet");
             Ok(())
@@ -413,20 +450,24 @@ pub extern fn main() -> i32 {
 
     #[cfg(has_slave_fpga_cfg)]
     board_artiq::slave_fpga::load().expect("cannot load RTM FPGA gateware");
-    #[cfg(has_serwb_phy_amc)]
-    serwb::wait_init();
 
-    i2c::init();
+    i2c::init().expect("I2C initialization failed");
     si5324::setup(&SI5324_SETTINGS, si5324::Input::Ckin1).expect("cannot initialize Si5324");
-    #[cfg(has_hmc830_7043)]
-    /* must be the first SPI init because of HMC830 SPI mode selection */
-    hmc830_7043::init().expect("cannot initialize HMC830/7043");
     unsafe {
         csr::drtio_transceiver::stable_clkin_write(1);
     }
     clock::spin_us(1500); // wait for CPLL/QPLL lock
     init_rtio_crg();
 
+    #[cfg(has_hmc830_7043)]
+    /* must be the first SPI init because of HMC830 SPI mode selection */
+    hmc830_7043::init().expect("cannot initialize HMC830/7043");
+    #[cfg(has_ad9154)]
+    {
+        for dacno in 0..csr::CONFIG_AD9154_COUNT {
+            board_artiq::ad9154::reset_and_detect(dacno as u8).expect("AD9154 DAC not detected");
+        }
+    }
     #[cfg(has_allaki_atts)]
     board_artiq::hmc542::program_all(8/*=4dB*/);
 
@@ -455,7 +496,7 @@ pub extern fn main() -> i32 {
         si5324::siphaser::select_recovered_clock(true).expect("failed to switch clocks");
         si5324::siphaser::calibrate_skew().expect("failed to calibrate skew");
 
-        #[cfg(has_ad9154)]
+        #[cfg(has_jdcg)]
         {
             /*
              * One side of the JESD204 elastic buffer is clocked by the Si5324, the other
@@ -470,14 +511,18 @@ pub extern fn main() -> i32 {
              * To handle those cases, we simply keep the JESD204 core in reset unless the
              * Si5324 is locked to the recovered clock.
              */
-            board_artiq::ad9154::jesd_reset(false);
-            board_artiq::ad9154::init();
+            jdcg::jesd::reset(false);
+            if repeaters[0].is_up() {
+                let _ = jdcg::jdac::init();
+            }
         }
 
         drtioaux::reset(0);
         drtiosat_reset(false);
         drtiosat_reset_phy(false);
 
+        #[cfg(has_jdcg)]
+        let mut rep0_was_up = repeaters[0].is_up();
         while drtiosat_link_rx_up() {
             drtiosat_process_errors();
             process_aux_packets(&mut repeaters, &mut routing_table, &mut rank);
@@ -487,13 +532,10 @@ pub extern fn main() -> i32 {
             hardware_tick(&mut hardware_tick_ts);
             if drtiosat_tsc_loaded() {
                 info!("TSC loaded from uplink");
-                #[cfg(has_ad9154)]
+                #[cfg(has_jdcg)]
                 {
-                    if let Err(e) = board_artiq::jesd204sync::sysref_auto_rtio_align() {
-                        error!("failed to align SYSREF at FPGA: {}", e);
-                    }
-                    if let Err(e) = board_artiq::jesd204sync::sysref_auto_dac_align() {
-                        error!("failed to align SYSREF at DAC: {}", e);
+                    if rep0_was_up {
+                        jdcg::jesd204sync::sysref_auto_align();
                     }
                 }
                 for rep in repeaters.iter() {
@@ -505,10 +547,19 @@ pub extern fn main() -> i32 {
                     error!("aux packet error: {}", e);
                 }
             }
+            #[cfg(has_jdcg)]
+            {
+                let rep0_is_up = repeaters[0].is_up();
+                if rep0_is_up && !rep0_was_up {
+                    let _ = jdcg::jdac::init();
+                    jdcg::jesd204sync::sysref_auto_align();
+                }
+                rep0_was_up = rep0_is_up;
+            }
         }
 
-        #[cfg(has_ad9154)]
-        board_artiq::ad9154::jesd_reset(true);
+        #[cfg(has_jdcg)]
+        jdcg::jesd::reset(true);
 
         drtiosat_reset_phy(true);
         drtiosat_reset(true);

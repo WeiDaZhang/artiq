@@ -28,9 +28,9 @@ extern crate proto_artiq;
 
 use core::cell::RefCell;
 use core::convert::TryFrom;
-use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
+use smoltcp::wire::IpCidr;
 
-use board_misoc::{csr, irq, ident, clock, boot, config};
+use board_misoc::{csr, irq, ident, clock, boot, config, net_settings};
 #[cfg(has_ethmac)]
 use board_misoc::ethmac;
 #[cfg(has_drtio)]
@@ -91,8 +91,6 @@ fn setup_log_levels() {
 fn sayma_hw_init() {
     #[cfg(has_slave_fpga_cfg)]
     board_artiq::slave_fpga::load().expect("cannot load RTM FPGA gateware");
-    #[cfg(has_serwb_phy_amc)]
-    board_artiq::serwb::wait_init();
 
     #[cfg(has_hmc830_7043)]
     /* must be the first SPI init because of HMC830 SPI mode selection */
@@ -122,63 +120,9 @@ fn startup() {
 
     setup_log_levels();
     #[cfg(has_i2c)]
-    board_artiq::i2c::init();
+    board_misoc::i2c::init().expect("I2C initialization failed");
     sayma_hw_init();
     rtio_clocking::init();
-
-    let hardware_addr;
-    match config::read_str("mac", |r| r.map(|s| s.parse())) {
-        Ok(Ok(addr)) => {
-            hardware_addr = addr;
-            info!("using MAC address {}", hardware_addr);
-        }
-        _ => {
-            #[cfg(soc_platform = "kasli")]
-            {
-                hardware_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x21]);
-            }
-            #[cfg(soc_platform = "sayma_amc")]
-            {
-                hardware_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x11]);
-            }
-            #[cfg(soc_platform = "metlino")]
-            {
-                hardware_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x19]);
-            }
-            #[cfg(soc_platform = "kc705")]
-            {
-                hardware_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
-            }
-            warn!("using default MAC address {}; consider changing it", hardware_addr);
-        }
-    }
-
-    let protocol_addr;
-    match config::read_str("ip", |r| r.map(|s| s.parse())) {
-        Ok(Ok(addr)) => {
-            protocol_addr = addr;
-            info!("using IP address {}", protocol_addr);
-        }
-        _ => {
-            #[cfg(soc_platform = "kasli")]
-            {
-                protocol_addr = IpAddress::v4(192, 168, 1, 70);
-            }
-            #[cfg(soc_platform = "sayma_amc")]
-            {
-                protocol_addr = IpAddress::v4(192, 168, 1, 60);
-            }
-            #[cfg(soc_platform = "metlino")]
-            {
-                protocol_addr = IpAddress::v4(192, 168, 1, 65);
-            }
-            #[cfg(soc_platform = "kc705")]
-            {
-                protocol_addr = IpAddress::v4(192, 168, 1, 50);
-            }
-            info!("using default IP address {}", protocol_addr);
-        }
-    }
 
     let mut net_device = unsafe { ethmac::EthernetDevice::new() };
     net_device.reset_phy_if_any();
@@ -205,12 +149,33 @@ fn startup() {
 
     let neighbor_cache =
         smoltcp::iface::NeighborCache::new(alloc::btree_map::BTreeMap::new());
-    let mut interface  =
-        smoltcp::iface::EthernetInterfaceBuilder::new(net_device)
+    let net_addresses = net_settings::get_adresses();
+    info!("network addresses: {}", net_addresses);
+    let mut interface = match net_addresses.ipv6_addr {
+        Some(addr) => {
+            let ip_addrs = [
+                IpCidr::new(net_addresses.ipv4_addr, 0),
+                IpCidr::new(net_addresses.ipv6_ll_addr, 0),
+                IpCidr::new(addr, 0)
+            ];
+            smoltcp::iface::EthernetInterfaceBuilder::new(net_device)
+                       .ethernet_addr(net_addresses.hardware_addr)
+                       .ip_addrs(ip_addrs)
                        .neighbor_cache(neighbor_cache)
-                       .ethernet_addr(hardware_addr)
-                       .ip_addrs([IpCidr::new(protocol_addr, 0)])
-                       .finalize();
+                       .finalize()
+        }
+        None => {
+            let ip_addrs = [
+                IpCidr::new(net_addresses.ipv4_addr, 0),
+                IpCidr::new(net_addresses.ipv6_ll_addr, 0)
+            ];
+            smoltcp::iface::EthernetInterfaceBuilder::new(net_device)
+                       .ethernet_addr(net_addresses.hardware_addr)
+                       .ip_addrs(ip_addrs)
+                       .neighbor_cache(neighbor_cache)
+                       .finalize()
+        }
+    };
 
     #[cfg(has_drtio)]
     let drtio_routing_table = urc::Urc::new(RefCell::new(
@@ -364,7 +329,7 @@ pub fn panic_impl(info: &core::panic::PanicInfo) -> ! {
         unsafe { boot::reset() }
     } else {
         println!("halting.");
-        println!("use `artiq_coreconfig write -s panic_reset 1` to restart instead");
+        println!("use `artiq_coremgmt config write -s panic_reset 1` to restart instead");
         loop {}
     }
 }

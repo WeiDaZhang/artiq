@@ -1,30 +1,3 @@
-#[cfg(hw_rev = "v1.0")]
-mod clock_mux {
-    use board_misoc::csr;
-
-    const CLK_SRC_EXT_SEL : u8 = 1 << 0;
-    const REF_CLK_SRC_SEL : u8 = 1 << 1;
-    const DAC_CLK_SRC_SEL : u8 = 1 << 2;
-    const REF_LO_CLK_SEL  : u8 = 1 << 3;
-
-    pub fn init() {
-        unsafe {
-            csr::clock_mux::out_write(
-                1*CLK_SRC_EXT_SEL |  // 1= ext clk from sma, 0= RF backplane (IC46) to IC45
-                1*REF_CLK_SRC_SEL |  // 1= low-noise clock, 0= Si5324 output (IC45) to HMC830
-                1*DAC_CLK_SRC_SEL |  // 1= HMC830 output, 1= clock mezzanine (IC54) to HMC7043 and J58/J59
-                0*REF_LO_CLK_SEL);   // 1= clock mezzanine, 0= HMC830 input  (IC52) to AFEs and J56/J57
-        }
-    }
-}
-
-#[cfg(hw_rev = "v2.0")]
-mod clock_mux {
-    pub fn init() {
-        // TODO
-    }
-}
-
 mod hmc830 {
     use board_misoc::{csr, clock};
 
@@ -166,32 +139,30 @@ mod hmc830 {
 pub mod hmc7043 {
     use board_misoc::{csr, clock};
 
-    pub const ANALOG_DELAY_RANGE: u8 = 24;
-
     // Warning: dividers are not synchronized with HMC830 clock input!
     // Set DAC_CLK_DIV to 1 or 0 for deterministic phase.
     // (0 bypasses the divider and reduces noise)
-    pub const DAC_CLK_DIV: u16 = 0;
-    pub const FPGA_CLK_DIV: u16 = 16;
-    pub const SYSREF_DIV: u16 = 256;
+    const DAC_CLK_DIV: u16 = 0;
+    const FPGA_CLK_DIV: u16 = 16; // Keep in sync with jdcg.rs
+    const SYSREF_DIV: u16 = 256;  // Keep in sync with jdcg.rs
     const HMC_SYSREF_DIV: u16 = SYSREF_DIV*8; // must be <= 4MHz
 
-    // enabled, divider, output config
+    // enabled, divider, output config, is sysref
     const OUTPUT_CONFIG: [(bool, u16, u8, bool); 14] = [
-        (true,  DAC_CLK_DIV,  0x08, false),  // 0: DAC2_CLK
-        (true,  SYSREF_DIV,   0x08, true),   // 1: DAC2_SYSREF
-        (true,  DAC_CLK_DIV,  0x08, false),  // 2: DAC1_CLK
-        (true,  SYSREF_DIV,   0x08, true),   // 3: DAC1_SYSREF
-        (false, 0,            0x08, false),  // 4: ADC2_CLK
-        (false, 0,            0x08, true),   // 5: ADC2_SYSREF
-        (false, 0,            0x08, false),  // 6: GTP_CLK2
-        (true,  SYSREF_DIV,   0x10, true),   // 7: FPGA_DAC_SYSREF, LVDS
-        (true,  FPGA_CLK_DIV, 0x08, false),  // 8: GTP_CLK1
-        (false, 0,            0x10, true),   // 9: AMC_MASTER_AUX_CLK
-        (true,  FPGA_CLK_DIV, 0x10, true),   // 10: RTM_MASTER_AUX_CLK, LVDS, used for DDMTD RTIO/SYSREF alignment
-        (false, 0,            0x10, true),   // 11: FPGA_ADC_SYSREF
-        (false, 0,            0x08, false),  // 12: ADC1_CLK
-        (false, 0,            0x08, true),   // 13: ADC1_SYSREF
+        (true,  DAC_CLK_DIV,  0x08, false),  //  0: DAC1_CLK
+        (true,  SYSREF_DIV,   0x00, true),   //  1: DAC1_SYSREF
+        (true,  DAC_CLK_DIV,  0x08, false),  //  2: DAC0_CLK
+        (true,  SYSREF_DIV,   0x00, true),   //  3: DAC0_SYSREF
+        (true,  SYSREF_DIV,   0x10, true),   //  4: AMC_FPGA_SYSREF0
+        (true,  FPGA_CLK_DIV, 0x10, true),   //  5: AMC_FPGA_SYSREF1
+        (false, 0,            0x10, false),  //  6: unused
+        (true,  SYSREF_DIV,   0x10, true),   //  7: RTM_FPGA_SYSREF0
+        (true,  FPGA_CLK_DIV, 0x08, false),  //  8: GTP_CLK0_IN
+        (false, 0,            0x10, false),  //  9: unused
+        (false, 0,            0x10, false),  // 10: unused
+        (false, 0,            0x08, false),  // 11: unused / uFL
+        (false, 0,            0x10, false),  // 12: unused
+        (false, SYSREF_DIV,   0x10, true),   // 13: RTM_FPGA_SYSREF1
     ];
 
     fn spi_setup() {
@@ -388,15 +359,14 @@ pub mod hmc7043 {
         Ok(())
     }
 
-    pub fn enable_fpga_ibuf() {
+    pub fn unmute() {
         /*
          * Never missing an opportunity to be awful, the HMC7043 produces broadband noise
-         * prior to intialization, which can upset the FPGA.
-         * One mitigation technique is to disable the input buffer until the HMC7043 is
-         * slightly better behaved.
+         * prior to intialization, which can upset the AMC FPGA.
+         * External circuitry mutes it.
          */
         unsafe {
-            csr::ad9154_crg::ibuf_disable_write(0);
+            csr::hmc7043_out_en::out_write(1);
         }
     }
 
@@ -426,7 +396,6 @@ pub fn init() -> Result<(), &'static str> {
     #[cfg(all(hmc830_ref = "150", rtio_frequency = "150.0"))]
     const DIV: (u32, u32, u32, u32) = (2, 32, 0, 1); // 150MHz -> 2.4GHz
 
-    clock_mux::init();
     /* do not use other SPI devices before HMC830 SPI mode selection */
     hmc830::select_spi_mode();
     hmc830::detect()?;
@@ -444,7 +413,7 @@ pub fn init() -> Result<(), &'static str> {
     hmc7043::init();
     hmc7043::test_gpo()?;
     hmc7043::check_phased()?;
-    hmc7043::enable_fpga_ibuf();
+    hmc7043::unmute();
 
     Ok(())
 }

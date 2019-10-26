@@ -226,6 +226,34 @@ class PeripheralManager:
                 raise ValueError
         return next(channel)
 
+    def process_novogorny(self, rtio_offset, peripheral):
+        self.gen("""
+            device_db["spi_{name}_adc"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.spi2",
+                "class": "SPIMaster",
+                "arguments": {{"channel": 0x{adc_channel:06x}}}
+            }}
+            device_db["ttl_{name}_cnv"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.ttl",
+                "class": "TTLOut",
+                "arguments": {{"channel": 0x{cnv_channel:06x}}},
+            }}
+            device_db["{name}"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.novogorny",
+                "class": "Novogorny",
+                "arguments": {{
+                    "spi_adc_device": "spi_{name}_adc",
+                    "cnv_device": "ttl_{name}_cnv"
+                }}
+            }}""",
+            name=self.get_name("novogorny"),
+            adc_channel=rtio_offset,
+            cnv_channel=rtio_offset + 1)
+        return 2
+
     def process_sampler(self, rtio_offset, peripheral):
         self.gen("""
             device_db["spi_{name}_adc"] = {{
@@ -240,7 +268,7 @@ class PeripheralManager:
                 "class": "SPIMaster",
                 "arguments": {{"channel": 0x{pgia_channel:06x}}}
             }}
-            device_db["spi_{name}_cnv"] = {{
+            device_db["ttl_{name}_cnv"] = {{
                 "type": "local",
                 "module": "artiq.coredevice.ttl",
                 "class": "TTLOut",
@@ -253,7 +281,7 @@ class PeripheralManager:
                 "arguments": {{
                     "spi_adc_device": "spi_{name}_adc",
                     "spi_pgia_device": "spi_{name}_pgia",
-                    "cnv_device": "spi_{name}_cnv"
+                    "cnv_device": "ttl_{name}_cnv"
                 }}
             }}""",
             name=self.get_name("sampler"),
@@ -261,6 +289,88 @@ class PeripheralManager:
             pgia_channel=rtio_offset + 1,
             cnv_channel=rtio_offset + 2)
         return 3
+
+    def process_suservo(self, rtio_offset, peripheral):
+        suservo_name = self.get_name("suservo")
+        sampler_name = self.get_name("sampler")
+        urukul0_name = self.get_name("urukul")
+        urukul1_name = self.get_name("urukul")
+        channel = count(0)
+        for i in range(8):
+            self.gen("""
+                device_db["{suservo_name}_ch{suservo_chn}"] = {{
+                    "type": "local",
+                    "module": "artiq.coredevice.suservo",
+                    "class": "Channel",
+                    "arguments": {{"channel": 0x{suservo_channel:06x}, "servo_device": "{suservo_name}"}}
+                }}""",
+                suservo_name=suservo_name,
+                suservo_chn=i,
+                suservo_channel=rtio_offset+next(channel))
+        self.gen("""
+            device_db["{suservo_name}"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.suservo",
+                "class": "SUServo",
+                "arguments": {{
+                    "channel": 0x{suservo_channel:06x},
+                    "pgia_device": "spi_{sampler_name}_pgia",
+                    "cpld0_device": "{urukul0_name}_cpld",
+                    "cpld1_device": "{urukul1_name}_cpld",
+                    "dds0_device": "{urukul0_name}_dds",
+                    "dds1_device": "{urukul1_name}_dds"
+                }}
+            }}""",
+            suservo_name=suservo_name,
+            sampler_name=sampler_name,
+            urukul0_name=urukul0_name,
+            urukul1_name=urukul1_name,
+            suservo_channel=rtio_offset+next(channel))
+        self.gen("""
+            device_db["spi_{sampler_name}_pgia"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.spi2",
+                "class": "SPIMaster",
+                "arguments": {{"channel": 0x{sampler_channel:06x}}}
+            }}""",
+            sampler_name=sampler_name,
+            sampler_channel=rtio_offset+next(channel))
+        pll_vco = peripheral.get("pll_vco", None)
+        for urukul_name in (urukul0_name, urukul1_name):
+            self.gen("""
+                device_db["spi_{urukul_name}"] = {{
+                    "type": "local",
+                    "module": "artiq.coredevice.spi2",
+                    "class": "SPIMaster",
+                    "arguments": {{"channel": 0x{urukul_channel:06x}}}
+                }}
+                device_db["{urukul_name}_cpld"] = {{
+                    "type": "local",
+                    "module": "artiq.coredevice.urukul",
+                    "class": "CPLD",
+                    "arguments": {{
+                        "spi_device": "spi_{urukul_name}",
+                        "refclk": {refclk},
+                        "clk_sel": {clk_sel}
+                    }}
+                }}
+                device_db["{urukul_name}_dds"] = {{
+                    "type": "local",
+                    "module": "artiq.coredevice.ad9910",
+                    "class": "AD9910",
+                    "arguments": {{
+                        "pll_n": {pll_n},
+                        "chip_select": 3,
+                        "cpld_device": "{urukul_name}_cpld"{pll_vco}
+                    }}
+                }}""",
+                urukul_name=urukul_name,
+                urukul_channel=rtio_offset+next(channel),
+                refclk=peripheral.get("refclk", self.master_description.get("rtio_frequency", 125e6)),
+                clk_sel=peripheral["clk_sel"],
+                pll_vco=",\n        \"pll_vco\": {}".format(pll_vco) if pll_vco is not None else "",
+                pll_n=peripheral.get("pll_n", 32))
+        return next(channel)
 
     def process_zotino(self, rtio_offset, peripheral):
         self.gen("""

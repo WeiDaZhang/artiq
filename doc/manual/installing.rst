@@ -23,10 +23,10 @@ Once Nix is installed, add the M-Labs package channel with: ::
 
   $ nix-channel --add https://nixbld.m-labs.hk/channel/custom/artiq/full/artiq-full
 
-Those channels track `nixpkgs 19.03 <https://github.com/NixOS/nixpkgs/tree/release-19.03>`_. You can check the latest status through the `Hydra interface <https://nixbld.m-labs.hk>`_. As the Nix package manager default installation uses the development version of nixpkgs, we need to tell it to switch to the release: ::
+Those channels track `nixpkgs 19.09 <https://github.com/NixOS/nixpkgs/tree/release-19.09>`_. You can check the latest status through the `Hydra interface <https://nixbld.m-labs.hk>`_. As the Nix package manager default installation uses the development version of nixpkgs, we need to tell it to switch to the release: ::
 
   $ nix-channel --remove nixpkgs
-  $ nix-channel --add https://nixos.org/channels/nixos-19.03 nixpkgs
+  $ nix-channel --add https://nixos.org/channels/nixos-19.09 nixpkgs
 
 Finally, make all the channel changes effective: ::
 
@@ -40,9 +40,6 @@ Nix won't install packages without verifying their cryptographic signature. Add 
   trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixbld.m-labs.hk-1:5aSRVA5b320xbNvu30tqxVPXpld73bhtOeH6uAjRyHc=
 
 The easiest way to obtain ARTIQ is then to install it into the user environment with ``$ nix-env -iA artiq-full.artiq-env``. This provides a minimal installation of ARTIQ where the usual commands (``artiq_master``, ``artiq_dashboard``, ``artiq_run``, etc.) are available.
-
-.. note::
-  If you are getting the error message ``file 'artiq-full' was not found in the Nix search path``, you are probably encountering `this Nix bug <https://github.com/NixOS/nix/issues/2709>`_. As a workaround, enter the command ``$ export NIX_PATH=~/.nix-defexpr/channels:$NIX_PATH`` and try again.
 
 This installation is however quite limited, as Nix creates a dedicated Python environment for the ARTIQ commands alone. This means that other useful Python packages that you may want (pandas, matplotlib, ...) are not available to them, and this restriction also applies to the M-Labs packages containing board binaries, which means that ``artiq_flash`` will not automatically find them.
 
@@ -106,7 +103,7 @@ Executing just ``conda`` should print the help of the ``conda`` command. If your
 Download the `ARTIQ installer script <https://raw.githubusercontent.com/m-labs/artiq/master/install-with-conda.py>`_ and edit its beginning to define the Conda environment name (you can leave the default environment name if you are just getting started) and select the desired ARTIQ packages. Non-ARTIQ packages should be installed manually later.
 
 .. note::
-  If you do not need to flash boards, the ``artiq`` package from the ``main`` Hydra build is sufficient. The packages named ``artiq-board-*`` contain only firmware for the FPGA board and are never necessary for using an ARTIQ system without reflashing it.
+  If you do not need to flash boards, the ``artiq`` package is sufficient. The packages named ``artiq-board-*`` contain only firmware for the FPGA board and are never necessary for using an ARTIQ system without reflashing it.
 
 Controllers for third-party devices (e.g. Thorlabs TCube, Lab Brick Digital Attenuator, etc.) that are not shipped with ARTIQ can also be installed with this script. Browse `Hydra <https://nixbld.m-labs.hk/project/artiq>`_ or see the list of NDSPs in this manual to find the names of the corresponding packages, and list them at the beginning of the script.
 
@@ -242,6 +239,8 @@ In other cases, install OpenOCD as before, and flash the IP and MAC addresses di
   $ artiq_flash -t [board] -V [variant] -f flash_storage.img storage start
 
 Check that you can ping the device. If ping fails, check that the Ethernet link LED is ON - on Kasli, it is the LED next to the SFP0 connector. As a next step, look at the messages emitted on the UART during boot. Use a program such as flterm or PuTTY to connect to the device's serial port at 115200bps 8-N-1 and reboot the device. On Kasli, the serial port is on FTDI channel 2 with v1.1 hardware (with channel 0 being JTAG) and on FTDI channel 1 with v1.0 hardware.
+
+If you want to use IPv6, the device also has a link-local address that corresponds to its EUI-64, and an additional arbitrary IPv6 address can be defined by using the ``ip6`` configuration key. All IPv4 and IPv6 addresses can be used at the same time.
 
 Miscellaneous configuration of the core device
 ----------------------------------------------

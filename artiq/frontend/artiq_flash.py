@@ -254,7 +254,7 @@ class ProgrammerSayma(Programmer):
         add_commands(self._script, "echo \"AMC FPGA XADC:\"", "xadc_report xcu.tap")
 
     def load_proxy(self):
-        self.load(find_proxy_bitfile("bscan_spi_xcku040-sayma.bit"), pld=1)
+        self.load(find_proxy_bitfile("bscan_spi_xcku040.bit"), pld=1)
 
     def start(self):
         add_commands(self._script, "xcu_program xcu.tap")
@@ -349,7 +349,7 @@ def main():
                     variants.append(entry.name[len(prefix):])
         if args.target == "sayma":
             try:
-                variants.remove("rtm_gateware")
+                variants.remove("rtm")
             except ValueError:
                 pass
         if len(variants) == 0:
@@ -405,7 +405,7 @@ def main():
             programmer.write_binary(*config["gateware"], gateware_bin)
             if args.target == "sayma" and variant != "master":
                 rtm_gateware_bin = convert_gateware(
-                    artifact_path("rtm_gateware", "rtm.bit"), header=True)
+                    artifact_path("rtm", "gateware", "top.bit"), header=True)
                 programmer.write_binary(*config["rtm_gateware"],
                                         rtm_gateware_bin)
         elif action == "bootloader":
@@ -424,8 +424,9 @@ def main():
             programmer.write_binary(*config["firmware"], firmware_fbi)
         elif action == "load":
             if args.target == "sayma":
-                rtm_gateware_bit = artifact_path("rtm_gateware", "rtm.bit")
-                programmer.load(rtm_gateware_bit, 0)
+                if variant != "simplesatellite" and variant != "master":
+                    rtm_gateware_bit = artifact_path("rtm", "gateware", "top.bit")
+                    programmer.load(rtm_gateware_bit, 0)
                 gateware_bit = artifact_path(variant_dir, "gateware", "top.bit")
                 programmer.load(gateware_bit, 1)
             else:

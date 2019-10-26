@@ -45,6 +45,12 @@ def peripheral_urukul(module, peripheral):
         sync_gen_cls)
 
 
+def peripheral_novogorny(module, peripheral):
+    if len(peripheral["ports"]) != 1:
+        raise ValueError("wrong number of ports")
+    eem.Novogorny.add_std(module, peripheral["ports"][0], ttl_serdes_7series.Output_8X)
+
+
 def peripheral_sampler(module, peripheral):
     if len(peripheral["ports"]) == 1:
         port, port_aux = peripheral["ports"][0], None
@@ -53,6 +59,18 @@ def peripheral_sampler(module, peripheral):
     else:
         raise ValueError("wrong number of ports")
     eem.Sampler.add_std(module, port, port_aux, ttl_serdes_7series.Output_8X)
+
+
+def peripheral_suservo(module, peripheral):
+    if len(peripheral["sampler_ports"]) != 2:
+        raise ValueError("wrong number of Sampler ports")
+    if len(peripheral["urukul0_ports"]) != 2:
+        raise ValueError("wrong number of Urukul #0 ports")
+    if len(peripheral["urukul1_ports"]) != 2:
+        raise ValueError("wrong number of Urukul #1 ports")
+    eem.SUServo.add_std(module,
+        peripheral["sampler_ports"],
+        peripheral["urukul0_ports"], peripheral["urukul1_ports"])
 
 
 def peripheral_zotino(module, peripheral):
@@ -64,19 +82,26 @@ def peripheral_zotino(module, peripheral):
 
 def peripheral_grabber(module, peripheral):
     if len(peripheral["ports"]) == 1:
-        port, port_aux = peripheral["ports"][0], None
+        port = peripheral["ports"][0]
+        port_aux = None
+        port_aux2 = None
     elif len(peripheral["ports"]) == 2:
         port, port_aux = peripheral["ports"]
+        port_aux2 = None
+    elif len(peripheral["ports"]) == 3:
+        port, port_aux, port_aux2 = peripheral["ports"]
     else:
         raise ValueError("wrong number of ports")
-    eem.Grabber.add_std(module, port, port_aux)
+    eem.Grabber.add_std(module, port, port_aux, port_aux2)
 
 
 def add_peripherals(module, peripherals):
     peripheral_processors = {
         "dio": peripheral_dio,
         "urukul": peripheral_urukul,
+        "novogorny": peripheral_novogorny,
         "sampler": peripheral_sampler,
+        "suservo": peripheral_suservo,
         "zotino": peripheral_zotino,
         "grabber": peripheral_grabber,
     }
@@ -108,7 +133,7 @@ class GenericStandalone(StandaloneBase):
         self.rtio_channels = []
         add_peripherals(self, description["peripherals"])
         for i in (1, 2):
-            print("SFP LED at RTIO channel {}".format(len(self.rtio_channels)))
+            print("SFP LED at RTIO channel 0x{:06x}".format(len(self.rtio_channels)))
             sfp_ctl = self.platform.request("sfp_ctl", i)
             phy = ttl_simple.Output(sfp_ctl.led)
             self.submodules += phy

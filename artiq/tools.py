@@ -93,9 +93,9 @@ def file_import(filename, prefix="file_import_"):
     return module
 
 
-def get_experiment(module, experiment=None):
-    if experiment:
-        return getattr(module, experiment)
+def get_experiment(module, class_name=None):
+    if class_name:
+        return getattr(module, class_name)
 
     exps = [(k, v) for k, v in module.__dict__.items()
             if k[0] != "_" and is_experiment(v)]
@@ -240,7 +240,16 @@ async def asyncio_wait_or_cancel(fs, **kwargs):
 
 class TaskObject:
     def start(self):
-        self.task = asyncio.ensure_future(self._do())
+        async def log_exceptions(awaitable):
+            try:
+                return await awaitable()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("Unhandled exception in TaskObject task body", exc_info=True)
+                raise
+
+        self.task = asyncio.ensure_future(log_exceptions(self._do))
 
     async def stop(self):
         self.task.cancel()
