@@ -9,9 +9,12 @@ import logging
 from PyQt5 import QtCore, QtGui, QtWidgets
 from quamash import QEventLoop
 
+from sipyco.asyncio_tools import atexit_register_coroutine
+from sipyco import common_args
+
+from artiq import __version__ as artiq_version
 from artiq import __artiq_dir__ as artiq_dir
-from artiq.tools import (add_common_args, atexit_register_coroutine,
-                         get_user_config_dir)
+from artiq.tools import get_user_config_dir
 from artiq.gui import state, applets, models, log
 from artiq.browser import datasets, files, experiments
 
@@ -21,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 def get_argparser():
     parser = argparse.ArgumentParser(description="ARTIQ Browser")
+    parser.add_argument("--version", action="version",
+                        version="ARTIQ v{}".format(artiq_version),
+                        help="print the ARTIQ version number")
     parser.add_argument("--db-file", default=None,
                         help="database file for local browser settings "
                         "(default: %(default)s)")
@@ -36,7 +42,7 @@ def get_argparser():
         help="TCP port to use to connect to the master")
     parser.add_argument("select", metavar="SELECT", nargs="?",
                         help="directory to browse or file to load")
-    add_common_args(parser)
+    common_args.verbosity_args(parser)
     return parser
 
 

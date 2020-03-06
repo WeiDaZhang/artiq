@@ -7,6 +7,8 @@ import textwrap
 from collections import defaultdict
 from itertools import count
 
+from artiq import __version__ as artiq_version
+
 
 def process_header(output, description):
     if description["target"] != "kasli":
@@ -226,6 +228,57 @@ class PeripheralManager:
                 raise ValueError
         return next(channel)
 
+    def process_mirny(self, rtio_offset, peripheral):
+        mirny_name = self.get_name("mirny")
+        channel = count(0)
+        self.gen("""
+           device_db["spi_{name}"]={{
+               "type": "local",
+               "module": "artiq.coredevice.spi2",
+               "class": "SPIMaster",
+               "arguments": {{"channel": 0x{channel:06x}}}
+           }}""",
+            name=mirny_name,
+            channel=rtio_offset+next(channel))
+
+        for i in range(4):
+            self.gen("""
+                device_db["ttl_{name}_sw{mchn}"] = {{
+                    "type": "local",
+                    "module": "artiq.coredevice.ttl",
+                    "class": "TTLOut",
+                    "arguments": {{"channel": 0x{ttl_channel:06x}}}
+                }}""",
+                name=mirny_name,
+                mchn=i,
+                ttl_channel=rtio_offset+next(channel))
+
+        for i in range(4):
+            self.gen("""
+                device_db["{name}_ch{mchn}"] = {{
+                    "type": "local",
+                    "module": "artiq.coredevice.adf5355",
+                    "class": "ADF5355",
+                    "arguments": {{
+                        "channel": {mchn},
+                        "sw_device": "ttl_{name}_sw{mchn}",
+                        "cpld_device": "{name}_cpld",
+                    }}
+                }}""",
+                name=mirny_name,
+                mchn=i)
+
+        self.gen("""
+            device_db["{name}_cpld"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.mirny",
+                "class": "Mirny",
+                "arguments": {{"spi_device": "spi_{name}"}},
+            }}""",
+            name=mirny_name)
+
+        return next(channel)
+
     def process_novogorny(self, rtio_offset, peripheral):
         self.gen("""
             device_db["spi_{name}_adc"] = {{
@@ -420,6 +473,18 @@ class PeripheralManager:
             channel=rtio_offset)
         return 2
 
+    def process_fastino(self, rtio_offset, peripheral):
+        self.gen("""
+            device_db["{name}"] = {{
+                "type": "local",
+                "module": "artiq.coredevice.fastino",
+                "class": "Fastino",
+                "arguments": {{"channel": 0x{channel:06x}}}
+            }}""",
+            name=self.get_name("fastino"),
+            channel=rtio_offset)
+        return 1
+
     def process(self, rtio_offset, peripheral):
         processor = getattr(self, "process_"+str(peripheral["type"]))
         return processor(rtio_offset, peripheral)
@@ -473,6 +538,9 @@ def process(output, master_description, satellites):
 def main():
     parser = argparse.ArgumentParser(
         description="ARTIQ device database template builder")
+    parser.add_argument("--version", action="version",
+                        version="ARTIQ v{}".format(artiq_version),
+                        help="print the ARTIQ version number")
     parser.add_argument("master_description", metavar="MASTER_DESCRIPTION",
                         help="JSON system description file for the standalone or master node")
     parser.add_argument("-o", "--output",

@@ -9,7 +9,11 @@ extern crate board_artiq;
 
 use core::convert::TryFrom;
 use board_misoc::{csr, irq, ident, clock, uart_logger, i2c};
-use board_artiq::{spi, si5324, drtioaux};
+#[cfg(has_si5324)]
+use board_artiq::si5324;
+#[cfg(has_wrpll)]
+use board_artiq::wrpll;
+use board_artiq::{spi, drtioaux};
 use board_artiq::drtio_routing;
 #[cfg(has_hmc830_7043)]
 use board_artiq::hmc830_7043;
@@ -413,7 +417,7 @@ fn hardware_tick(ts: &mut u64) {
     }
 }
 
-#[cfg(rtio_frequency = "150.0")]
+#[cfg(all(has_si5324, rtio_frequency = "150.0"))]
 const SI5324_SETTINGS: si5324::FrequencySettings
     = si5324::FrequencySettings {
     n1_hs  : 6,
@@ -426,7 +430,7 @@ const SI5324_SETTINGS: si5324::FrequencySettings
     crystal_ref: true
 };
 
-#[cfg(rtio_frequency = "125.0")]
+#[cfg(all(has_si5324, rtio_frequency = "125.0"))]
 const SI5324_SETTINGS: si5324::FrequencySettings
     = si5324::FrequencySettings {
     n1_hs  : 5,
@@ -448,15 +452,19 @@ pub extern fn main() -> i32 {
     info!("software ident {}", csr::CONFIG_IDENTIFIER_STR);
     info!("gateware ident {}", ident::read(&mut [0; 64]));
 
-    #[cfg(has_slave_fpga_cfg)]
-    board_artiq::slave_fpga::load().expect("cannot load RTM FPGA gateware");
-
-    i2c::init().expect("I2C initialization failed");
-    si5324::setup(&SI5324_SETTINGS, si5324::Input::Ckin1).expect("cannot initialize Si5324");
+    #[cfg(has_si5324)]
+    {
+        i2c::init().expect("I2C initialization failed");
+        si5324::setup(&SI5324_SETTINGS, si5324::Input::Ckin1).expect("cannot initialize Si5324");
+    }
+    #[cfg(has_wrpll)]
+    wrpll::init();
     unsafe {
         csr::drtio_transceiver::stable_clkin_write(1);
     }
     clock::spin_us(1500); // wait for CPLL/QPLL lock
+    #[cfg(has_wrpll)]
+    wrpll::diagnostics();
     init_rtio_crg();
 
     #[cfg(has_hmc830_7043)]
@@ -468,8 +476,6 @@ pub extern fn main() -> i32 {
             board_artiq::ad9154::reset_and_detect(dacno as u8).expect("AD9154 DAC not detected");
         }
     }
-    #[cfg(has_allaki_atts)]
-    board_artiq::hmc542::program_all(8/*=4dB*/);
 
     #[cfg(has_drtio_routing)]
     let mut repeaters = [repeater::Repeater::default(); csr::DRTIOREP.len()];
@@ -493,8 +499,13 @@ pub extern fn main() -> i32 {
         }
 
         info!("uplink is up, switching to recovered clock");
-        si5324::siphaser::select_recovered_clock(true).expect("failed to switch clocks");
-        si5324::siphaser::calibrate_skew().expect("failed to calibrate skew");
+        #[cfg(has_si5324)]
+        {
+            si5324::siphaser::select_recovered_clock(true).expect("failed to switch clocks");
+            si5324::siphaser::calibrate_skew().expect("failed to calibrate skew");
+        }
+        #[cfg(has_wrpll)]
+        wrpll::select_recovered_clock(true);
 
         #[cfg(has_jdcg)]
         {
@@ -564,8 +575,11 @@ pub extern fn main() -> i32 {
         drtiosat_reset_phy(true);
         drtiosat_reset(true);
         drtiosat_tsc_loaded();
-        info!("uplink is down, switching to local crystal clock");
+        info!("uplink is down, switching to local oscillator clock");
+        #[cfg(has_si5324)]
         si5324::siphaser::select_recovered_clock(false).expect("failed to switch clocks");
+        #[cfg(has_wrpll)]
+        wrpll::select_recovered_clock(false);
     }
 }
 

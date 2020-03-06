@@ -19,6 +19,7 @@ from artiq.gateware import jesd204_tools
 from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_ultrascale, sawg
 from artiq.gateware.drtio.transceiver import gth_ultrascale
 from artiq.gateware.drtio.siphaser import SiPhaser7Series
+from artiq.gateware.drtio.wrpll import WRPLL, DDMTDSamplerExtFF
 from artiq.gateware.drtio.rx_synchronizer import XilinxRXSynchronizer
 from artiq.gateware.drtio import *
 from artiq.build_soc import *
@@ -45,23 +46,30 @@ class RTMUARTForward(Module):
         ]
 
 
-class SatelliteBase(BaseSoC):
+class SatelliteBase(MiniSoC):
     mem_map = {
         "drtioaux":      0x14000000,
     }
-    mem_map.update(BaseSoC.mem_map)
+    mem_map.update(MiniSoC.mem_map)
 
-    def __init__(self, rtio_clk_freq=125e6, identifier_suffix="", **kwargs):
-        BaseSoC.__init__(self,
+    def __init__(self, rtio_clk_freq=125e6, identifier_suffix="", *, with_wrpll, **kwargs):
+        MiniSoC.__init__(self,
                  cpu_type="or1k",
                  sdram_controller_type="minicon",
                  l2_size=128*1024,
+                 integrated_sram_size=8192,
+                 ethmac_nrxslots=4,
+                 ethmac_ntxslots=4,
                  **kwargs)
         add_identifier(self, suffix=identifier_suffix)
         self.rtio_clk_freq = rtio_clk_freq
 
         platform = self.platform
 
+        if with_wrpll:
+            clock_recout_pads = platform.request("ddmtd_rec_clk")
+        else:
+            clock_recout_pads = None
         # Use SFP0 to connect to master (Kasli)
         self.comb += platform.request("sfp_tx_disable", 0).eq(0)
         drtio_data_pads = [
@@ -72,7 +80,8 @@ class SatelliteBase(BaseSoC):
             clock_pads=platform.request("cdr_clk_clean"),
             data_pads=drtio_data_pads,
             sys_clk_freq=self.clk_freq,
-            rtio_clk_freq=rtio_clk_freq)
+            rtio_clk_freq=rtio_clk_freq,
+            clock_recout_pads=clock_recout_pads)
         self.csr_devices.append("drtio_transceiver")
 
         self.submodules.rtio_tsc = rtio.TSC("sync", glbl_fine_ts_width=3)
@@ -120,25 +129,42 @@ class SatelliteBase(BaseSoC):
         self.add_memory_group("drtioaux_mem", drtioaux_memory_group)
         self.add_csr_group("drtiorep", drtiorep_csr_group)
 
-        self.config["RTIO_FREQUENCY"] = str(rtio_clk_freq/1e6)
-        self.comb += platform.request("filtered_clk_sel").eq(1)
-        self.submodules.siphaser = SiPhaser7Series(
-            si5324_clkin=platform.request("si5324_clkin"),
-            rx_synchronizer=self.rx_synchronizer,
-            ultrascale=True,
-            rtio_clk_freq=rtio_clk_freq)
-        platform.add_false_path_constraints(
-            self.crg.cd_sys.clk, self.siphaser.mmcm_freerun_output)
-        self.csr_devices.append("siphaser")
-        self.submodules.si5324_rst_n = gpio.GPIOOut(platform.request("si5324").rst_n)
-        self.csr_devices.append("si5324_rst_n")
-        i2c = self.platform.request("i2c")
-        self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
-        self.csr_devices.append("i2c")
-        self.config["I2C_BUS_COUNT"] = 1
-        self.config["HAS_SI5324"] = None
-
         rtio_clk_period = 1e9/rtio_clk_freq
+        self.config["RTIO_FREQUENCY"] = str(rtio_clk_freq/1e6)
+        if with_wrpll:
+            self.comb += [
+                platform.request("filtered_clk_sel").eq(0),
+                platform.request("ddmtd_main_dcxo_oe").eq(1),
+                platform.request("ddmtd_helper_dcxo_oe").eq(1)
+            ]
+            self.submodules.wrpll_sampler = DDMTDSamplerExtFF(
+                platform.request("ddmtd_inputs"))
+            self.submodules.wrpll = WRPLL(
+                helper_clk_pads=platform.request("ddmtd_helper_clk"),
+                main_dcxo_i2c=platform.request("ddmtd_main_dcxo_i2c"),
+                helper_dxco_i2c=platform.request("ddmtd_helper_dcxo_i2c"),
+                ddmtd_inputs=self.wrpll_sampler)
+            self.csr_devices.append("wrpll")
+            platform.add_period_constraint(self.wrpll.cd_helper.clk, rtio_clk_period*0.99)
+            platform.add_false_path_constraints(self.crg.cd_sys.clk, self.wrpll.cd_helper.clk)
+        else:
+            self.comb += platform.request("filtered_clk_sel").eq(1)
+            self.submodules.siphaser = SiPhaser7Series(
+                si5324_clkin=platform.request("si5324_clkin"),
+                rx_synchronizer=self.rx_synchronizer,
+                ultrascale=True,
+                rtio_clk_freq=rtio_clk_freq)
+            platform.add_false_path_constraints(
+                self.crg.cd_sys.clk, self.siphaser.mmcm_freerun_output)
+            self.csr_devices.append("siphaser")
+            self.submodules.si5324_rst_n = gpio.GPIOOut(platform.request("si5324").rst_n)
+            self.csr_devices.append("si5324_rst_n")
+            i2c = self.platform.request("i2c")
+            self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
+            self.csr_devices.append("i2c")
+            self.config["I2C_BUS_COUNT"] = 1
+            self.config["HAS_SI5324"] = None
+
         gth = self.drtio_transceiver.gths[0]
         platform.add_period_constraint(gth.txoutclk, rtio_clk_period/2)
         platform.add_period_constraint(gth.rxoutclk, rtio_clk_period)
@@ -340,6 +366,7 @@ class Master(MiniSoC, AMPSoC):
                          cpu_type="or1k",
                          sdram_controller_type="minicon",
                          l2_size=128*1024,
+                         integrated_sram_size=8192,
                          ethmac_nrxslots=4,
                          ethmac_ntxslots=4,
                          **kwargs)
@@ -361,12 +388,12 @@ class Master(MiniSoC, AMPSoC):
         self.config["SI5324_AS_SYNTHESIZER"] = None
         self.config["RTIO_FREQUENCY"] = str(rtio_clk_freq/1e6)
 
+        self.comb += platform.request("filtered_clk_sel").eq(1)
         self.comb += platform.request("sfp_tx_disable", 0).eq(0)
         self.submodules.drtio_transceiver = gth_ultrascale.GTH(
             clock_pads=platform.request("cdr_clk_clean", 0),
             data_pads=[platform.request("sfp", 0)] +
-                      # 6 and not 8 to work around Vivado bug (Xilinx CR 1020646)
-                      [platform.request("rtm_gth", i) for i in range(6)],
+                      [platform.request("rtm_gth", i) for i in range(8)],
             sys_clk_freq=self.clk_freq,
             rtio_clk_freq=rtio_clk_freq)
         self.csr_devices.append("drtio_transceiver")
@@ -489,13 +516,15 @@ def main():
         default=False, action="store_true",
         help="Remove SAWG RTIO channels feeding the JESD links (speeds up "
         "compilation time). Replaces them with fixed pattern generators.")
+    parser.add_argument("--with-wrpll", default=False, action="store_true")
     args = parser.parse_args()
 
     variant = args.variant.lower()
     if variant == "satellite":
-        soc = Satellite(with_sawg=not args.without_sawg, **soc_sayma_amc_argdict(args))
+        soc = Satellite(with_sawg=not args.without_sawg, with_wrpll=args.with_wrpll,
+                        **soc_sayma_amc_argdict(args))
     elif variant == "simplesatellite":
-        soc = SimpleSatellite(**soc_sayma_amc_argdict(args))
+        soc = SimpleSatellite(with_wrpll=args.with_wrpll, **soc_sayma_amc_argdict(args))
     elif variant == "master":
         soc = Master(**soc_sayma_amc_argdict(args))
     else:

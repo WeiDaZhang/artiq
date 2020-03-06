@@ -12,6 +12,9 @@ import h5py
 
 from llvmlite_artiq import binding as llvm
 
+from sipyco import common_args
+
+from artiq import __version__ as artiq_version
 from artiq.language.environment import EnvExperiment, ProcessArgumentManager
 from artiq.language.types import TBool
 from artiq.master.databases import DeviceDB, DatasetDB
@@ -125,8 +128,11 @@ class DummyCCB:
 def get_argparser(with_file=True):
     parser = argparse.ArgumentParser(
         description="Local experiment running tool")
+    parser.add_argument("--version", action="version",
+                        version="ARTIQ v{}".format(artiq_version),
+                        help="print the ARTIQ version number")
 
-    add_common_args(parser)
+    common_args.verbosity_args(parser)
     parser.add_argument("--device-db", default="device_db.py",
                         help="device database file (default: '%(default)s')")
     parser.add_argument("--dataset-db", default="dataset_db.pyon",
@@ -184,7 +190,7 @@ def _build_experiment(device_mgr, dataset_mgr, args):
 
 def run(with_file=False):
     args = get_argparser(with_file).parse_args()
-    init_logger(args)
+    common_args.init_logger_from_args(args)
 
     device_mgr = DeviceManager(DeviceDB(args.device_db),
                                virtual_devices={"scheduler": DummyScheduler(),

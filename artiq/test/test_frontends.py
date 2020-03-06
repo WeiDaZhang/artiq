@@ -7,15 +7,14 @@ import unittest
 class TestFrontends(unittest.TestCase):
     def test_help(self):
         """Test --help as a simple smoke test against catastrophic breakage."""
-        # Skip tests for GUI programs on headless CI environments.
         commands = {
             "aqctl": [
                 "corelog"
             ],
             "artiq": [
-                "client", "compile", "coreanalyzer", "coremgmt", "ctlmgr",
-                "devtool", "flash", "influxdb", "master", "mkfs", "route",
-                "rpctool", "rtiomon", "run", "session"
+                "client", "compile", "coreanalyzer", "coremgmt",
+                "netboot", "flash", "master", "mkfs", "route",
+                "rtiomon", "run", "session", "browser", "dashboard"
             ]
         }
 

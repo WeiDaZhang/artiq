@@ -113,6 +113,8 @@ class AD9912:
     def set_att_mu(self, att):
         """Set digital step attenuator in machine units.
 
+        This method will write the attenuator settings of all four channels.
+
         .. seealso:: :meth:`artiq.coredevice.urukul.CPLD.set_att_mu`
 
         :param att: Attenuation setting, 8 bit digital.
@@ -122,6 +124,8 @@ class AD9912:
     @kernel
     def set_att(self, att):
         """Set digital step attenuator in SI units.
+
+        This method will write the attenuator settings of all four channels.
 
         .. seealso:: :meth:`artiq.coredevice.urukul.CPLD.set_att`
 
@@ -136,7 +140,7 @@ class AD9912:
         After the SPI transfer, the shared IO update pin is pulsed to
         activate the data.
 
-        :param ftw: Frequency tuning word: 32 bit unsigned.
+        :param ftw: Frequency tuning word: 48 bit unsigned.
         :param pow: Phase tuning word: 16 bit unsigned.
         """
         # streaming transfer of FTW and POW

@@ -1,9 +1,9 @@
 import asyncio
 import tokenize
 
-from artiq.protocols.sync_struct import Notifier, process_mod, update_from_dict
-from artiq.protocols import pyon
-from artiq.tools import TaskObject
+from sipyco.sync_struct import Notifier, process_mod, update_from_dict
+from sipyco import pyon
+from sipyco.asyncio_tools import TaskObject
 
 
 def device_db_from_file(filename):
@@ -25,8 +25,12 @@ class DeviceDB:
     def get_device_db(self):
         return self.data.raw_view
 
-    def get(self, key):
-        return self.data.raw_view[key]
+    def get(self, key, resolve_alias=False):
+        desc = self.data.raw_view[key]
+        if resolve_alias:
+            while isinstance(desc, str):
+                desc = self.data.raw_view[desc]
+        return desc
 
 
 class DatasetDB(TaskObject):

@@ -1,9 +1,14 @@
+#!/usr/bin/env python3
+
 import sys
 import os
 import select
 
 from artiq.experiment import *
-from artiq.coredevice.ad9910 import AD9910
+from artiq.coredevice.ad9910 import AD9910, SyncDataEeprom
+from artiq.master.databases import DeviceDB
+from artiq.master.worker_db import DeviceManager
+
 
 if os.name == "nt":
     import msvcrt
@@ -34,13 +39,8 @@ def is_enter_pressed() -> TBool:
             return False
 
 
-class KasliTester(EnvExperiment):
+class SinaraTester(EnvExperiment):
     def build(self):
-        # hack to detect artiq_run
-        if self.get_device("scheduler").__class__.__name__ != "DummyScheduler":
-            raise NotImplementedError(
-                "must be run with artiq_run to support keyboard interaction")
-
         self.setattr_device("core")
 
         self.leds = dict()
@@ -240,15 +240,11 @@ class KasliTester(EnvExperiment):
         print("Calibrating inter-device synchronization...")
         for channel_name, channel_dev in self.urukuls:
             if (not isinstance(channel_dev, AD9910) or
-                    (channel_dev.sync_delay_seed_eeprom is None and channel_dev.io_update_delay_eeprom is None)):
-                print("{}\tno synchronization".format(channel_name))
-            elif channel_dev.sync_delay_seed_eeprom is not channel_dev.io_update_delay_eeprom:
-                print("{}\tunsupported EEPROM configuration".format(channel_name))
-            elif channel_dev.sync_delay_seed_offset != channel_dev.io_update_delay_offset:
-                print("{}\tunsupported EEPROM offsets".format(channel_name))
+                    not isinstance(channel_dev.sync_data, SyncDataEeprom)):
+                print("{}\tno EEPROM synchronization".format(channel_name))
             else:
-                eeprom = channel_dev.sync_delay_seed_eeprom
-                offset = channel_dev.sync_delay_seed_offset
+                eeprom = channel_dev.sync_data.eeprom_device
+                offset = channel_dev.sync_data.eeprom_offset
                 sync_delay_seed, io_update_delay = self.calibrate_urukul(channel_dev)
                 print("{}\t{} {}".format(channel_name, sync_delay_seed, io_update_delay))
                 eeprom_word = (sync_delay_seed << 24) | (io_update_delay << 16)
@@ -369,7 +365,7 @@ class KasliTester(EnvExperiment):
             self.grabber_capture(card_dev, rois)
 
     def run(self):
-        print("****** Kasli system tester ******")
+        print("****** Sinara system tester ******")
         print("")
         self.core.reset()
         if self.leds:
@@ -386,3 +382,18 @@ class KasliTester(EnvExperiment):
             self.test_zotinos()
         if self.grabbers:
             self.test_grabbers()
+
+
+def main():
+    device_mgr = DeviceManager(DeviceDB("device_db.py"))
+    try:
+        experiment = SinaraTester((device_mgr, None, None, None))
+        experiment.prepare()
+        experiment.run()
+        experiment.analyze()
+    finally:
+        device_mgr.close_devices()
+
+
+if __name__ == "__main__":
+    main()

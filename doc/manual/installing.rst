@@ -21,7 +21,7 @@ First, install the Nix package manager. Some distributions provide a package for
 
 Once Nix is installed, add the M-Labs package channel with: ::
 
-  $ nix-channel --add https://nixbld.m-labs.hk/channel/custom/artiq/full/artiq-full
+  $ nix-channel --add https://nixbld.m-labs.hk/channel/custom/artiq/full-beta/artiq-full
 
 Those channels track `nixpkgs 19.09 <https://github.com/NixOS/nixpkgs/tree/release-19.09>`_. You can check the latest status through the `Hydra interface <https://nixbld.m-labs.hk>`_. As the Nix package manager default installation uses the development version of nixpkgs, we need to tell it to switch to the release: ::
 
@@ -58,6 +58,7 @@ Installing multiple packages and making them visible to the ARTIQ commands requi
         (pkgs.python3.withPackages(ps: [
           # List desired Python packages here.
           artiq-full.artiq
+          artiq-full.artiq-comtools
           # The board packages are also "Python" packages. You only need a board
           # package if you intend to reflash that board (those packages contain
           # only board firmware).
@@ -213,6 +214,8 @@ Then, you can write the flash:
 * For Kasli::
 
       $ artiq_flash -V [your system variant]
+
+The JTAG adapter is integrated into the Kasli board; for flashing (and debugging) you simply need to connect your computer to the micro-USB connector on the Kasli front panel.
 
 * For the KC705 board::
 

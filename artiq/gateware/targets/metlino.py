@@ -43,6 +43,7 @@ class Master(MiniSoC, AMPSoC):
                          cpu_type="or1k",
                          sdram_controller_type="minicon",
                          l2_size=128*1024,
+                         integrated_sram_size=8192,
                          ethmac_nrxslots=4,
                          ethmac_ntxslots=4,
                          **kwargs)
@@ -52,6 +53,8 @@ class Master(MiniSoC, AMPSoC):
         platform = self.platform
         rtio_clk_freq = 150e6
 
+        self.comb += platform.request("input_clk_sel").eq(1)
+        self.comb += platform.request("filtered_clk_sel").eq(1)
         self.submodules.si5324_rst_n = gpio.GPIOOut(platform.request("si5324").rst_n)
         self.csr_devices.append("si5324_rst_n")
         i2c = self.platform.request("i2c")

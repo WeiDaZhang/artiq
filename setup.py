@@ -14,7 +14,7 @@ if sys.version_info[:3] < (3, 5, 3):
 requirements = [
     "numpy", "scipy",
     "python-dateutil", "prettytable", "h5py",
-    "quamash", "pyqtgraph", "pygit2", "aiohttp",
+    "quamash", "pyqtgraph", "pygit2",
     "llvmlite_artiq", "pythonparser", "python-Levenshtein",
 ]
 
@@ -23,20 +23,16 @@ console_scripts = [
     "artiq_compile = artiq.frontend.artiq_compile:main",
     "artiq_coreanalyzer = artiq.frontend.artiq_coreanalyzer:main",
     "artiq_coremgmt = artiq.frontend.artiq_coremgmt:main",
-    "artiq_ctlmgr = artiq.frontend.artiq_ctlmgr:main",
     "artiq_ddb_template = artiq.frontend.artiq_ddb_template:main",
-    "artiq_devtool = artiq.frontend.artiq_devtool:main",
-    "artiq_influxdb = artiq.frontend.artiq_influxdb:main",
-    "artiq_influxdb_schedule = artiq.frontend.artiq_influxdb_schedule:main",
+    "artiq_netboot = artiq.frontend.artiq_netboot:main",
     "artiq_master = artiq.frontend.artiq_master:main",
     "artiq_mkfs = artiq.frontend.artiq_mkfs:main",
     "artiq_rtiomon = artiq.frontend.artiq_rtiomon:main",
+    "artiq_sinara_tester = artiq.frontend.artiq_sinara_tester:main",
     "artiq_session = artiq.frontend.artiq_session:main",
     "artiq_route = artiq.frontend.artiq_route:main",
-    "artiq_rpctool = artiq.frontend.artiq_rpctool:main",
     "artiq_run = artiq.frontend.artiq_run:main",
     "artiq_flash = artiq.frontend.artiq_flash:main",
-
     "aqctl_corelog = artiq.frontend.aqctl_corelog:main",
 ]
 
